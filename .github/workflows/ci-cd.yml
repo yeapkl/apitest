@@ -83,3 +83,51 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-cloud-run:
+    name: Deploy to Cloud Run (test environment)
+    needs: docker-publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    environment:
+      name: gcp-test
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      # No long-lived GCP key is stored in GitHub: this exchanges GitHub's
+      # own OIDC token for short-lived GCP credentials. See
+      # docs/deploy/gcp-cloud-run-setup.md for the one-time setup that makes
+      # this trust relationship possible.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          region: us-central1
+          service: hello-world-api
+          # The exact image docker-publish just pushed, not a mutable tag,
+          # so this deploy is reproducible and never races a later push.
+          image: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          env_vars: |-
+            APP_ENV=production
+          secrets: |-
+            JWT_SECRET_KEY=jwt-secret-key:latest
+          # deploy-cloudrun has no dedicated input for the service's own
+          # runtime identity (distinct from the deployer identity used to
+          # authenticate above), so it's passed as a raw gcloud flag. Runs
+          # as its own minimally-privileged identity — see
+          # docs/deploy/gcp-cloud-run-setup.md.
+          flags: --allow-unauthenticated --port=8000 --service-account=${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+
+      - name: Smoke test the deployment
+        run: |
+          curl -sf "${{ steps.deploy.outputs.url }}/health" | tee /dev/stderr | grep -q '"status":"ok"'

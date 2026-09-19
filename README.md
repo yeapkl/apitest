@@ -58,6 +58,13 @@ docker build -t hello-world-api .
 docker run -p 8000:8000 -e JWT_SECRET_KEY=$(openssl rand -hex 32) hello-world-api
 ```
 
+### Live test deployment (Google Cloud Run)
+
+Every push to `main` also deploys the image to a free-tier Cloud Run
+service, authenticating via Workload Identity Federation (no GCP key
+stored in GitHub). See `docs/deploy/gcp-cloud-run-setup.md` for the
+one-time `gcloud` setup and how to find the deployed URL.
+
 ## Try it
 
 ```bash
